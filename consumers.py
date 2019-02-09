@@ -8,8 +8,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 class Consumer(object):
+
     def __init__(self, service):
         self.service = service
+        self._consumer_tag = None
 
     def start(self):
         """
@@ -28,9 +30,31 @@ class Consumer(object):
 
         """
         LOGGER.info('Issuing consumer related RPC commands')
-        self.service.add_on_cancel_callback()
-        self.service._consumer_tag = self.service._channel.basic_consume(self.on_message,
-                                                                         self.service.QUEUE)
+        self.add_on_cancel_callback()
+        self._consumer_tag = self.service.get__channel().basic_consume(
+            self.on_message,
+            self.service.QUEUE)
+
+    def add_on_cancel_callback(self):
+        """Add a callback that will be invoked if RabbitMQ cancels the consumer
+        for some reason. If RabbitMQ does cancel the consumer,
+        on_consumer_cancelled will be invoked by pika.
+
+        """
+        LOGGER.info('Adding consumer cancellation callback')
+        self.service.get_channel().add_on_cancel_callback(self.on_consumer_cancelled)
+
+    def on_consumer_cancelled(self, method_frame):
+        """Invoked by pika when RabbitMQ sends a Basic.Cancel for a consumer
+        receiving messages.
+
+        :param pika.frame.Method method_frame: The Basic.Cancel frame
+
+        """
+        LOGGER.info('Consumer was cancelled remotely, shutting down: %r',
+                    method_frame)
+        self.service.close_channel()
+
     def on_message(self, unused_channel, basic_deliver, properties, body):
         """Invoked by pika when a message is delivered from RabbitMQ. The
         channel is passed for your convenience. The basic_deliver object that
@@ -57,7 +81,7 @@ class Consumer(object):
 
         """
         LOGGER.info('Acknowledging message %s', delivery_tag)
-        self.service._channel.basic_ack(delivery_tag)
+        self.service.get_channel().basic_ack(delivery_tag)
 
     def stop(self):
         """
@@ -70,9 +94,10 @@ class Consumer(object):
         Basic.Cancel RPC command.
 
         """
-        if self.service._channel:
+        channel = self.service.get_channel()
+        if channel:
             LOGGER.info('Sending a Basic.Cancel RPC command to RabbitMQ')
-            self.service._channel.basic_cancel(self.service.on_cancelok, self.service._consumer_tag)
+            channel.basic_cancel(self.service.on_cancelok, self._consumer_tag)
 
 
 class EventBriteConsumerService(BaseService):
@@ -91,18 +116,6 @@ class EventBriteConsumerService(BaseService):
         self._connection = None
         self._channel = None
         self._closing = False
-        self._consumer_tag = None
         self._url = amqp_url
         # proclaim as a consumer.
         self.implementation = Consumer(self)
-
-    def on_bindok(self, unused_frame):
-        """Invoked by pika when the Queue.Bind method has completed. At this
-        point we will start consuming messages by calling start_consuming
-        which will invoke the needed RPC commands to start the process.
-
-        :param pika.frame.Method unused_frame: The Queue.BindOk response frame
-
-        """
-        LOGGER.info('Queue bound')
-        self.implementation.start_consuming()

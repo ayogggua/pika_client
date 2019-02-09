@@ -21,10 +21,12 @@ class BaseService(object):
     commands that were issued and that should surface in the output as well.
 
     """
-    EXCHANGE = 'message'
+    APP_ID = None
+    RECONNECT_INTERVAL = 5  # seconds.
+    EXCHANGE = None
     EXCHANGE_TYPE = 'topic'
-    QUEUE = 'text'
-    ROUTING_KEY = 'example.text'
+    QUEUE = 'default-queue'
+    ROUTING_KEY = 'default.*'
 
     def __init__(self, amqp_url):
         """Create a new instance of the subscriber/publisher class, passing in the AMQP
@@ -36,9 +38,14 @@ class BaseService(object):
         self._connection = None
         self._channel = None
         self._closing = False
-        self._consumer_tag = None
         self._url = amqp_url
         self.implementation = None
+
+    def get_channel(self):
+        return self._channel
+
+    def get_connection(self):
+        return self._connection
 
     def connect(self):
         """This method connects to RabbitMQ, returning the connection handle.
@@ -49,9 +56,10 @@ class BaseService(object):
 
         """
         LOGGER.info('Connecting to %s', self._url)
-        return pika.SelectConnection(pika.URLParameters(self._url),
-                                     self.on_connection_open,
-                                     stop_ioloop_on_close=False)
+        return pika.SelectConnection(
+            pika.URLParameters(self._url),
+            self.on_connection_open,
+            stop_ioloop_on_close=False)
 
     def on_connection_open(self, unused_connection):
         """This method is called by pika once the connection to RabbitMQ has
@@ -89,7 +97,7 @@ class BaseService(object):
         else:
             LOGGER.warning('Connection closed, reopening in 5 seconds: (%s) %s',
                            reply_code, reply_text)
-            self._connection.add_timeout(5, self.reconnect)
+            self._connection.add_timeout(self.RECONNECT_INTERVAL, self.reconnect)
 
     def reconnect(self):
         """Will be invoked by the IOLoop timer if the connection is
@@ -152,7 +160,7 @@ class BaseService(object):
         """
         LOGGER.warning('Channel %i was closed: (%s) %s',
                        channel, reply_code, reply_text)
-        self._connection.close()
+        self.close_connection()
 
     def setup_exchange(self, exchange_name):
         """Setup the exchange on RabbitMQ by invoking the Exchange.Declare RPC
@@ -200,8 +208,9 @@ class BaseService(object):
         """
         LOGGER.info('Binding %s to %s with %s',
                     self.EXCHANGE, self.QUEUE, self.ROUTING_KEY)
-        self._channel.queue_bind(self.on_bindok, self.QUEUE,
-                                 self.EXCHANGE, self.ROUTING_KEY)
+        self._channel.queue_bind(
+            self.on_bindok, self.QUEUE,
+            self.EXCHANGE, self.ROUTING_KEY)
 
     def on_bindok(self, unused_frame):
         """Invoked by pika when the Queue.Bind method has completed. At this
@@ -212,28 +221,7 @@ class BaseService(object):
 
         """
         LOGGER.info('Queue bound')
-        self.implementation.start()
-
-    def add_on_cancel_callback(self):
-        """Add a callback that will be invoked if RabbitMQ cancels the consumer
-        for some reason. If RabbitMQ does cancel the consumer,
-        on_consumer_cancelled will be invoked by pika.
-
-        """
-        LOGGER.info('Adding consumer cancellation callback')
-        self._channel.add_on_cancel_callback(self.on_consumer_cancelled)
-
-    def on_consumer_cancelled(self, method_frame):
-        """Invoked by pika when RabbitMQ sends a Basic.Cancel for a consumer
-        receiving messages.
-
-        :param pika.frame.Method method_frame: The Basic.Cancel frame
-
-        """
-        LOGGER.info('Consumer was cancelled remotely, shutting down: %r',
-                    method_frame)
-        if self._channel:
-            self._channel.close()
+        self.implementation.start()    
 
     def on_cancelok(self, unused_frame):
         """This method is invoked by pika when RabbitMQ acknowledges the
@@ -252,8 +240,9 @@ class BaseService(object):
         Channel.Close RPC command.
 
         """
-        LOGGER.info('Closing the channel')
-        self._channel.close()
+        if self._channel is not None:
+            LOGGER.info('Closing the channel')
+            self._channel.close()
 
     def run(self):
         """Run the example consumer by connecting to RabbitMQ and then
@@ -282,5 +271,6 @@ class BaseService(object):
 
     def close_connection(self):
         """This method closes the connection to RabbitMQ."""
-        LOGGER.info('Closing connection')
-        self._connection.close()
+        if self._connection is not None:
+            LOGGER.info('Closing connection')
+            self._connection.close()
