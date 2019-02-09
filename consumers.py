@@ -98,24 +98,3 @@ class Consumer(object):
         if channel:
             LOGGER.info('Sending a Basic.Cancel RPC command to RabbitMQ')
             channel.basic_cancel(self.service.on_cancelok, self._consumer_tag)
-
-
-class EventBriteConsumerService(BaseService):
-    EXCHANGE = 'scheduler_x'
-    EXCHANGE_TYPE = 'topic'
-    QUEUE = 'eventbrite'
-    ROUTING_KEY = 'eventbrite.api.*'
-
-    def __init__(self, amqp_url):
-        """Create a new instance of the consumer class, passing in the AMQP
-        URL used to connect to RabbitMQ.
-
-        :param str amqp_url: The AMQP url to connect with
-
-        """
-        self._connection = None
-        self._channel = None
-        self._closing = False
-        self._url = amqp_url
-        # proclaim as a consumer.
-        self.implementation = Consumer(self)
