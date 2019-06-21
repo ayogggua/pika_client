@@ -39,7 +39,6 @@ class BaseService(object):
         self._channel = None
         self._closing = False
         self._url = amqp_url
-        self.implementation = None
 
     def get_channel(self):
         return self._channel
@@ -221,7 +220,7 @@ class BaseService(object):
 
         """
         LOGGER.info('Queue bound')
-        self.implementation.start()    
+        self.start()
 
     def on_cancelok(self, unused_frame):
         """This method is invoked by pika when RabbitMQ acknowledges the
@@ -265,7 +264,7 @@ class BaseService(object):
         """
         LOGGER.info('Stopping')
         self._closing = True
-        self.implementation.stop()
+        self.stop()
         self._connection.ioloop.start()
         LOGGER.info('Stopped')
 

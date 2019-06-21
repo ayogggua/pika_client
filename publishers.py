@@ -8,11 +8,7 @@ LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
 LOGGER = logging.getLogger(__name__)
 
 
-class Publisher(object):
-
-    def __init__(self, service):
-        self.service = service
-
+class PublisherMixin(object):
     def start(self):
         """
         Method to start whatever the interface is designated to do.
@@ -31,7 +27,7 @@ class Publisher(object):
 
         """
         LOGGER.info('Issuing Confirm.Select RPC command')
-        self.service.get_channel().confirm_delivery(self.on_delivery_confirmation)
+        self.get_channel().confirm_delivery(self.on_delivery_confirmation)
 
     def on_delivery_confirmation(self, method_frame):
         """Invoked by pika when RabbitMQ responds to a Basic.Publish RPC
@@ -69,19 +65,19 @@ class Publisher(object):
         class.
 
         """
-        channel = self.service.get_channel()
+        channel = self.get_channel()
         if channel is None or not channel.is_open:
             return
 
         headers = {}
         properties = pika.BasicProperties(
-            app_id=self.service.APP_ID,
+            app_id=self.APP_ID,
             content_type='application/json',
             headers=headers)
 
         channel.basic_publish(
-            self.service.EXCHANGE,
-            self.service.ROUTING_KEY,
+            self.EXCHANGE,
+            self.ROUTING_KEY,
             json.dumps(message, ensure_ascii=False),
             properties)
 
@@ -91,5 +87,5 @@ class Publisher(object):
         """
         Method to stop whatever the interface is designated to do.
         """
-        self.service.close_channel()
-        self.service.close_connection()
+        self.close_channel()
+        self.close_connection()

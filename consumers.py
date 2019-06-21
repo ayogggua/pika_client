@@ -7,10 +7,9 @@ LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
 LOGGER = logging.getLogger(__name__)
 
 
-class Consumer(object):
+class ConsumerMixin(object):
 
     def __init__(self, service):
-        self.service = service
         self._consumer_tag = None
 
     def start(self):
@@ -31,9 +30,9 @@ class Consumer(object):
         """
         LOGGER.info('Issuing consumer related RPC commands')
         self.add_on_cancel_callback()
-        self._consumer_tag = self.service.get__channel().basic_consume(
+        self._consumer_tag = self.get__channel().basic_consume(
             self.on_message,
-            self.service.QUEUE)
+            self.QUEUE)
 
     def add_on_cancel_callback(self):
         """Add a callback that will be invoked if RabbitMQ cancels the consumer
@@ -42,7 +41,7 @@ class Consumer(object):
 
         """
         LOGGER.info('Adding consumer cancellation callback')
-        self.service.get_channel().add_on_cancel_callback(self.on_consumer_cancelled)
+        self.get_channel().add_on_cancel_callback(self.on_consumer_cancelled)
 
     def on_consumer_cancelled(self, method_frame):
         """Invoked by pika when RabbitMQ sends a Basic.Cancel for a consumer
@@ -53,7 +52,7 @@ class Consumer(object):
         """
         LOGGER.info('Consumer was cancelled remotely, shutting down: %r',
                     method_frame)
-        self.service.close_channel()
+        self.close_channel()
 
     def on_message(self, unused_channel, basic_deliver, properties, body):
         """Invoked by pika when a message is delivered from RabbitMQ. The
@@ -81,7 +80,7 @@ class Consumer(object):
 
         """
         LOGGER.info('Acknowledging message %s', delivery_tag)
-        self.service.get_channel().basic_ack(delivery_tag)
+        self.get_channel().basic_ack(delivery_tag)
 
     def stop(self):
         """
@@ -94,7 +93,7 @@ class Consumer(object):
         Basic.Cancel RPC command.
 
         """
-        channel = self.service.get_channel()
+        channel = self.get_channel()
         if channel:
             LOGGER.info('Sending a Basic.Cancel RPC command to RabbitMQ')
-            channel.basic_cancel(self.service.on_cancelok, self._consumer_tag)
+            channel.basic_cancel(self.on_cancelok, self._consumer_tag)
