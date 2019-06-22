@@ -56,11 +56,12 @@ class BaseService(object):
 
         """
         LOGGER.info('Connecting to %s', self._url)
-        return pika.SelectConnection(
+        self._connection = pika.SelectConnection(
             pika.URLParameters(self._url),
             on_open_callback=self.on_connection_open,
             on_open_error_callback=self.on_connection_open_error,
             on_close_callback=self.on_connection_closed)
+        return self._connection
 
     def on_connection_open(self, unused_connection):
         """This method is called by pika once the connection to RabbitMQ has
