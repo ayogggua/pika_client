@@ -67,6 +67,7 @@ class PublisherMixin(object):
         """
         channel = self.get_channel()
         if channel is None or not channel.is_open:
+            LOGGER.error("Cannot publish the message. Channel unavailable or closed.")
             return
 
         headers = {}
