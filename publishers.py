@@ -85,8 +85,15 @@ class PublisherMixin(object):
         LOGGER.info('Published message # %s', message)
 
     def stop(self):
+        """Stop the service by closing the channel and connection. We
+        set a flag here so that we stop scheduling new messages to be
+        published. The IOLoop is started because this method is
+        invoked by the Try/Catch below when KeyboardInterrupt is caught.
+        Starting the IOLoop again will allow the publisher to cleanly
+        disconnect from RabbitMQ.
         """
-        Method to stop whatever the interface is designated to do.
-        """
+        LOGGER.info('Stopping.')
+        self._closing = True
         self.close_channel()
         self.close_connection()
+        LOGGER.info("Stopped.")

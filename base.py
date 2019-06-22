@@ -57,7 +57,9 @@ class BaseService(object):
         LOGGER.info('Connecting to %s', self._url)
         return pika.SelectConnection(
             pika.URLParameters(self._url),
-            self.on_connection_open)
+            on_open_callback=self.on_connection_open,
+            on_open_error_callback=self.on_connection_open_error,
+            on_close_callback=self.on_connection_closed)
 
     def on_connection_open(self, unused_connection):
         """This method is called by pika once the connection to RabbitMQ has
@@ -68,50 +70,32 @@ class BaseService(object):
 
         """
         LOGGER.info('Connection opened')
-        self.add_on_connection_close_callback()
         self.open_channel()
 
-    def add_on_connection_close_callback(self):
-        """This method adds an on close callback that will be invoked by pika
-        when RabbitMQ closes the connection to the publisher unexpectedly.
-
+    def on_connection_open_error(self, unused_connection, err):
+        """This method is called by pika if the connection to RabbitMQ
+        can't be established.
+        :param pika.SelectConnection _unused_connection: The connection
+        :param Exception err: The error
         """
-        LOGGER.info('Adding connection close callback')
-        self._connection.add_on_close_callback(self.on_connection_closed)
+        LOGGER.error('Connection open failed, reopening in 5 seconds: %s', err)
+        self._connection.ioloop.call_later(self.RECONNECT_INTERVAL, self._connection.ioloop.stop)
 
-    def on_connection_closed(self, connection, reply_code, reply_text):
+    def on_connection_closed(self, connection, reason):
         """This method is invoked by pika when the connection to RabbitMQ is
         closed unexpectedly. Since it is unexpected, we will reconnect to
         RabbitMQ if it disconnects.
 
         :param pika.connection.Connection connection: The closed connection obj
-        :param int reply_code: The server provided reply_code if given
-        :param str reply_text: The server provided reply_text if given
+        :param str reason: The server provided reason if given
 
         """
         self._channel = None
         if self._closing:
             self._connection.ioloop.stop()
         else:
-            LOGGER.warning('Connection closed, reopening in 5 seconds: (%s) %s',
-                           reply_code, reply_text)
-            self._connection.add_timeout(self.RECONNECT_INTERVAL, self.reconnect)
-
-    def reconnect(self):
-        """Will be invoked by the IOLoop timer if the connection is
-        closed. See the on_connection_closed method.
-
-        """
-        # This is the old connection IOLoop instance, stop its ioloop
-        self._connection.ioloop.stop()
-
-        if not self._closing:
-
-            # Create a new connection
-            self._connection = self.connect()
-
-            # There is now a new connection, needs a new ioloop to run
-            self._connection.ioloop.start()
+            LOGGER.warning('Connection closed, reopening in %d seconds: %s.', self.RECONNECT_INTERVAL, reason)
+            self._connection.ioloop.call_later(self.RECONNECT_INTERVAL, self._connection.ioloop.stop)
 
     def open_channel(self):
         """Open a new channel with RabbitMQ by issuing the Channel.Open RPC
@@ -119,7 +103,7 @@ class BaseService(object):
         on_channel_open callback will be invoked by pika.
 
         """
-        LOGGER.info('Creating a new channel')
+        LOGGER.info('Creating a new channel.')
         self._connection.channel(on_open_callback=self.on_channel_open)
 
     def on_channel_open(self, channel):
@@ -144,7 +128,7 @@ class BaseService(object):
         LOGGER.info('Adding channel close callback')
         self._channel.add_on_close_callback(self.on_channel_closed)
 
-    def on_channel_closed(self, channel, reply_text):
+    def on_channel_closed(self, channel, reason):
         """Invoked by pika when RabbitMQ unexpectedly closes the channel.
         Channels are usually closed if you attempt to do something that
         violates the protocol, such as re-declare an exchange or queue with
@@ -152,13 +136,14 @@ class BaseService(object):
         to shutdown the object.
 
         :param pika.channel.Channel: The closed channel
-        :param int reply_code: The numeric reason the channel was closed
-        :param str reply_text: The text reason the channel was closed
+        :param str reason: The text reason the channel was closed
 
         """
         LOGGER.warning('Channel %i was closed: %s',
-                       channel, reply_text)
-        self.close_connection()
+                       channel, reason)
+        self._channel = None
+        if not self._closing:
+            self.close_connection()
 
     def setup_exchange(self, exchange_name):
         """Setup the exchange on RabbitMQ by invoking the Exchange.Declare RPC
@@ -169,18 +154,21 @@ class BaseService(object):
 
         """
         LOGGER.info('Declaring exchange %s', exchange_name)
-        self._channel.exchange_declare(self.on_exchange_declareok,
-                                       exchange_name,
-                                       self.EXCHANGE_TYPE)
+        cb = functools.partial(
+            self.on_exchange_declareok, userdata=exchange_name)
+        self._channel.exchange_declare(
+            exchange=exchange_name,
+            exchange_type=self.EXCHANGE_TYPE,
+            callback=cb)
 
-    def on_exchange_declareok(self, unused_frame):
+    def on_exchange_declareok(self, unused_frame, userdata):
         """Invoked by pika when RabbitMQ has finished the Exchange.Declare RPC
         command.
 
         :param pika.Frame.Method unused_frame: Exchange.DeclareOk response frame
 
         """
-        LOGGER.info('Exchange declared')
+        LOGGER.info('Exchange declared: %s.', userdata)
         self.setup_queue(self.QUEUE)
 
     def setup_queue(self, queue_name):
@@ -192,7 +180,7 @@ class BaseService(object):
 
         """
         LOGGER.info('Declaring queue %s', queue_name)
-        self._channel.queue_declare(self.on_queue_declareok, queue_name)
+        self._channel.queue_declare(queue=queue_name, callback=self.on_queue_declareok)
 
     def on_queue_declareok(self, method_frame):
         """Method invoked by pika when the Queue.Declare RPC call made in
@@ -204,11 +192,12 @@ class BaseService(object):
         :param pika.frame.Method method_frame: The Queue.DeclareOk frame
 
         """
-        LOGGER.info('Binding %s to %s with %s',
-                    self.EXCHANGE, self.QUEUE, self.ROUTING_KEY)
+        LOGGER.info('Binding %s to %s with %s', self.EXCHANGE, self.QUEUE, self.ROUTING_KEY)
         self._channel.queue_bind(
-            self.on_bindok, self.QUEUE,
-            self.EXCHANGE, self.ROUTING_KEY)
+            self.QUEUE,
+            self.EXCHANGE,
+            routing_key=self.ROUTING_KEY,
+            callback=self.on_bindok)
 
     def on_bindok(self, unused_frame):
         """Invoked by pika when the Queue.Bind method has completed. At this
@@ -218,20 +207,8 @@ class BaseService(object):
         :param pika.frame.Method unused_frame: The Queue.BindOk response frame
 
         """
-        LOGGER.info('Queue bound')
+        LOGGER.info('Queue bound.')
         self.start()
-
-    def on_cancelok(self, unused_frame):
-        """This method is invoked by pika when RabbitMQ acknowledges the
-        cancellation of a consumer. At this point we will close the channel.
-        This will invoke the on_channel_closed method once the channel has been
-        closed, which will in-turn close the connection.
-
-        :param pika.frame.Method unused_frame: The Basic.CancelOk frame
-
-        """
-        LOGGER.info('RabbitMQ acknowledged the cancellation of the consumer')
-        self.close_channel()
 
     def close_channel(self):
         """Call to close the channel with RabbitMQ cleanly by issuing the
@@ -242,33 +219,19 @@ class BaseService(object):
             LOGGER.info('Closing the channel')
             self._channel.close()
 
-    def run(self):
-        """Run the example consumer by connecting to RabbitMQ and then
-        starting the IOLoop to block and allow the SelectConnection to operate.
-
-        """
-        self._connection = self.connect()
-        self._connection.ioloop.start()
-
-    def stop(self):
-        """Cleanly shutdown the connection to RabbitMQ by stopping the consumer
-        with RabbitMQ. When RabbitMQ confirms the cancellation, on_cancelok
-        will be invoked by pika, which will then closing the channel and
-        connection. The IOLoop is started again because this method is invoked
-        when CTRL-C is pressed raising a KeyboardInterrupt exception. This
-        exception stops the IOLoop which needs to be running for pika to
-        communicate with RabbitMQ. All of the commands issued prior to starting
-        the IOLoop will be buffered but not processed.
-
-        """
-        LOGGER.info('Stopping')
-        self._closing = True
-        self.stop()
-        self._connection.ioloop.start()
-        LOGGER.info('Stopped')
-
     def close_connection(self):
         """This method closes the connection to RabbitMQ."""
         if self._connection is not None:
             LOGGER.info('Closing connection')
             self._connection.close()
+
+    def run(self):
+        try:
+            self._connection = self.connect()
+            self._connection.ioloop.start()
+        except KeyboardInterrupt:
+            self.stop()
+            if (self._connection is not None and
+                    not self._connection.is_closed):
+                # Finish closing
+                self._connection.ioloop.start()
