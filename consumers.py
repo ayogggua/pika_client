@@ -10,7 +10,8 @@ LOGGER = logging.getLogger(__name__)
 
 class ConsumerMixin(object):
 
-    def __init__(self, service):
+    def __init__(self, *args):
+        super().__init__(*args)
         self._consumer_tag = None
         self._prefetch_count = 1
         self.was_consuming = False
