@@ -222,7 +222,7 @@ class BaseService(object):
 
     def close_connection(self):
         """This method closes the connection to RabbitMQ."""
-        if self._connection is not None:
+        if self._connection is not None and not self._connection.is_closed:
             LOGGER.info('Closing connection')
             self._connection.close()
 
