@@ -22,6 +22,8 @@ class ConsumerMixin(object):
         Method to start whatever the interface is designated to do.
         """
         self.set_qos()
+        if self.init_callback is not None:
+            init_callback(self)
 
     def set_qos(self):
         """This method sets up the consumer prefetch to only be delivered

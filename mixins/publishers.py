@@ -14,6 +14,8 @@ class PublisherMixin(object):
         Method to start whatever the interface is designated to do.
         """
         self.enable_delivery_confirmations()
+        if self.init_callback is not None:
+            init_callback(self)
 
     def enable_delivery_confirmations(self):
         """Send the Confirm.Select RPC method to RabbitMQ to enable delivery

@@ -227,7 +227,8 @@ class BaseService(object):
             LOGGER.info('Closing connection')
             self._connection.close()
 
-    def run(self):
+    def run(self, init_callback=None):
+        self.init_callback = init_callback
         try:
             self._connection = self.connect()
             self._connection.ioloop.start()
