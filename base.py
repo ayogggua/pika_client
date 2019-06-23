@@ -161,7 +161,8 @@ class BaseService(object):
         self._channel.exchange_declare(
             exchange=exchange_name,
             exchange_type=self.EXCHANGE_TYPE,
-            callback=cb)
+            callback=cb,
+            durable=True)
 
     def on_exchange_declareok(self, unused_frame, userdata):
         """Invoked by pika when RabbitMQ has finished the Exchange.Declare RPC
