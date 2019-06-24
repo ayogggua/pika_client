@@ -4,12 +4,12 @@ import logging
 import functools
 import pika
 
-LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
-              '-35s %(lineno) -5d: %(message)s')
+from mill_common.mixins import CallbackMixin
+
 LOGGER = logging.getLogger(__name__)
 
 
-class BaseService(object):
+class BaseConnector(CallbackMixin, object):
     """This is base class that will handle unexpected interactions
     with RabbitMQ such as channel and connection closures.
 
@@ -29,23 +29,46 @@ class BaseService(object):
     QUEUE = 'default-queue'
     ROUTING_KEY = 'default.*'
 
-    def __init__(self, amqp_url):
+    def __init__(
+            self,
+            amqp_url,
+            app_id='',
+            exchange='',
+            exchange_type='topic',
+            queue=None,
+            routing_key='',
+            reconnect_interval=None):
         """Create a new instance of the subscriber/publisher class, passing in the AMQP
         URL used to connect to RabbitMQ.
 
         :param str amqp_url: The AMQP url to connect with
 
         """
+        super().__init__()
+        self._url = amqp_url
+        self.APP_ID = app_id
+        if reconnect_interval is not None:
+            self.RECONNECT_INTERVAL = reconnect_interval  # seconds.
+        self.EXCHANGE = exchange
+        self.EXCHANGE_TYPE = exchange_type
+        self.QUEUE = queue
+        self.ROUTING_KEY = routing_key
+
         self._connection = None
         self._channel = None
         self._closing = False
-        self._url = amqp_url
 
-    def get_channel(self):
+    @property
+    def channel(self):
         return self._channel
 
-    def get_connection(self):
+    @property
+    def connection(self):
         return self._connection
+
+    @property
+    def ioloop(self):
+        return self.connection.ioloop
 
     def connect(self):
         """This method connects to RabbitMQ, returning the connection handle.
@@ -211,7 +234,7 @@ class BaseService(object):
 
         """
         LOGGER.info('Queue bound.')
-        self.start()
+        self._process_callbacks('on_bindok')
 
     def close_channel(self):
         """Call to close the channel with RabbitMQ cleanly by issuing the
@@ -228,8 +251,7 @@ class BaseService(object):
             LOGGER.info('Closing connection')
             self._connection.close()
 
-    def run(self, init_callback=None):
-        self.init_callback = init_callback
+    def run(self):
         try:
             self._connection = self.connect()
             self._connection.ioloop.start()
@@ -239,3 +261,7 @@ class BaseService(object):
                     not self._connection.is_closed):
                 # Finish closing
                 self._connection.ioloop.start()
+
+
+class Connector(BaseConnector):
+    pass

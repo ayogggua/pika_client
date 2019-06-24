@@ -3,27 +3,50 @@
 import logging
 import functools
 
-LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
-              '-35s %(lineno) -5d: %(message)s')
+from mill_common.mixins import CallbackMixin
+from mill_common.base import Connector
+
 LOGGER = logging.getLogger(__name__)
 
 
-class ConsumerMixin(object):
+class BaseConsumer(CallbackMixin, object):
 
-    def __init__(self, *args):
-        super().__init__(*args)
+    def __init__(
+            self,
+            amqp_url,
+            app_id='',
+            exchange='',
+            exchange_type='topic',
+            queue=None,
+            routing_key='',
+            reconnect_interval=None,
+            **kwargs):
+        super().__init__()
         self._consumer_tag = None
         self._prefetch_count = 1
         self.was_consuming = False
         self._consuming = False
+
+        self.amqp_url = amqp_url
+        self.connector = self.get_connector_class()(
+            amqp_url=self.amqp_url,
+            app_id=app_id,
+            exchange=exchange,
+            exchange_type=exchange_type,
+            queue=queue,
+            routing_key=routing_key,
+            reconnect_interval=reconnect_interval)
+        self.connector.register_callback('on_bindok', self.start)
+
+    def get_connector_class(self):
+        return Connector
 
     def start(self):
         """
         Method to start whatever the interface is designated to do.
         """
         self.set_qos()
-        if self.init_callback is not None:
-            self.init_callback(self)
+        self._process_callbacks('start')
 
     def set_qos(self):
         """This method sets up the consumer prefetch to only be delivered
@@ -31,7 +54,7 @@ class ConsumerMixin(object):
         before RabbitMQ will deliver another one. You should experiment
         with different prefetch values to achieve desired performance.
         """
-        self.get_channel().basic_qos(
+        self.connector.channel.basic_qos(
             prefetch_count=self._prefetch_count, callback=self.on_basic_qos_ok)
 
     def on_basic_qos_ok(self, _unused_frame):
@@ -55,8 +78,8 @@ class ConsumerMixin(object):
         """
         LOGGER.info('Issuing consumer related RPC commands.')
         self.add_on_cancel_callback()
-        self._consumer_tag = self.get_channel().basic_consume(
-            self.QUEUE,
+        self._consumer_tag = self.connector.channel.basic_consume(
+            self.connector.QUEUE,
             self.on_message)
 
         self.was_consuming = True
@@ -69,7 +92,7 @@ class ConsumerMixin(object):
 
         """
         LOGGER.info('Adding consumer cancellation callback')
-        self.get_channel().add_on_cancel_callback(self.on_consumer_cancelled)
+        self.connector.channel.add_on_cancel_callback(self.on_consumer_cancelled)
 
     def on_consumer_cancelled(self, method_frame):
         """Invoked by pika when RabbitMQ sends a Basic.Cancel for a consumer
@@ -80,7 +103,7 @@ class ConsumerMixin(object):
         """
         LOGGER.info('Consumer was cancelled remotely, shutting down: %r',
                     method_frame)
-        self.close_channel()
+        self.connector.close_channel()
 
     def on_message(self, unused_channel, basic_deliver, properties, body):
         """Invoked by pika when a message is delivered from RabbitMQ. The
@@ -108,7 +131,7 @@ class ConsumerMixin(object):
 
         """
         LOGGER.info('Acknowledging message %s', delivery_tag)
-        self.get_channel().basic_ack(delivery_tag)
+        self.connector.channel.basic_ack(delivery_tag)
 
     def stop(self):
         """Cleanly shutdown the connection to RabbitMQ by stopping the consumer
@@ -120,14 +143,14 @@ class ConsumerMixin(object):
         communicate with RabbitMQ. All of the commands issued prior to starting
         the IOLoop will be buffered but not processed.
         """
-        if not self._closing:
-            self._closing = True
+        if not self.connector._closing:
+            self.connector._closing = True
             LOGGER.info('Stopping.')
             if self._consuming:
                 self.stop_consuming()
-                self._connection.ioloop.start()
+                self.connector.ioloop.start()
             else:
-                self._connection.ioloop.stop()
+                self.connector.ioloop.stop()
             LOGGER.info('Stopped.')
 
     def stop_consuming(self):
@@ -135,12 +158,12 @@ class ConsumerMixin(object):
         Basic.Cancel RPC command.
 
         """
-        channel = self.get_channel()
+        channel = self.connector.channel
         if channel:
             LOGGER.info('Sending a Basic.Cancel RPC command to RabbitMQ.')
             cb = functools.partial(
                 self.on_cancelok, userdata=self._consumer_tag)
-            self._channel.basic_cancel(self._consumer_tag, cb)
+            channel.basic_cancel(self._consumer_tag, cb)
 
     def on_cancelok(self, unused_frame, userdata):
         """This method is invoked by pika when RabbitMQ acknowledges the
@@ -155,4 +178,11 @@ class ConsumerMixin(object):
         LOGGER.info(
             'RabbitMQ acknowledged the cancellation of the consumer: %s',
             userdata)
-        self.close_channel()
+        self.connector.close_channel()
+
+    def run(self):
+        """
+        Connect and start ioloop.
+        """
+        self.connector.run()
+

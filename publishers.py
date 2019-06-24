@@ -4,19 +4,44 @@ import logging
 import json
 import pika
 
-LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
-              '-35s %(lineno) -5d: %(message)s')
+from mill_common.mixins import CallbackMixin
+from mill_common.base import Connector
+
 LOGGER = logging.getLogger(__name__)
 
 
-class PublisherMixin(object):
+class BasePublisher(CallbackMixin, object):
+    def __init__(
+            self,
+            amqp_url,
+            app_id='',
+            exchange='',
+            exchange_type='topic',
+            queue=None,
+            routing_key='',
+            reconnect_interval=None,
+            **kwargs):
+        super().__init__()
+        self.amqp_url = amqp_url
+        self.connector = self.get_connector_class()(
+            amqp_url=self.amqp_url,
+            app_id=app_id,
+            exchange=exchange,
+            exchange_type=exchange_type,
+            queue=queue,
+            routing_key=routing_key,
+            reconnect_interval=reconnect_interval)
+        self.connector.register_callback('on_bindok', self.start)
+
+    def get_connector_class(self):
+        return Connector
+
     def start(self):
         """
         Method to start whatever the interface is designated to do.
         """
         self.enable_delivery_confirmations()
-        if self.init_callback is not None:
-            self.init_callback(self)
+        self._process_callbacks('start')
 
     def enable_delivery_confirmations(self):
         """Send the Confirm.Select RPC method to RabbitMQ to enable delivery
@@ -30,7 +55,7 @@ class PublisherMixin(object):
 
         """
         LOGGER.info('Issuing Confirm.Select RPC command')
-        self.get_channel().confirm_delivery(self.on_delivery_confirmation)
+        self.connector.channel.confirm_delivery(self.on_delivery_confirmation)
 
     def on_delivery_confirmation(self, method_frame):
         """Invoked by pika when RabbitMQ responds to a Basic.Publish RPC
@@ -68,20 +93,20 @@ class PublisherMixin(object):
         class.
 
         """
-        channel = self.get_channel()
+        channel = self.connector.channel
         if channel is None or not channel.is_open:
             LOGGER.error("Cannot publish the message. Channel unavailable or closed.")
             return
 
         headers = {}
         properties = pika.BasicProperties(
-            app_id=self.APP_ID,
+            app_id=self.connector.APP_ID,
             content_type='application/json',
             headers=headers)
 
         channel.basic_publish(
-            self.EXCHANGE,
-            self.ROUTING_KEY,
+            self.connector.EXCHANGE,
+            self.connector.ROUTING_KEY,
             json.dumps(message, ensure_ascii=False),
             properties)
 
@@ -96,7 +121,13 @@ class PublisherMixin(object):
         disconnect from RabbitMQ.
         """
         LOGGER.info('Stopping.')
-        self._closing = True
-        self.close_channel()
-        self.close_connection()
+        self.connector._closing = True
+        self.connector.close_channel()
+        self.connector.close_connection()
         LOGGER.info("Stopped.")
+
+    def run(self):
+        """
+        Connect and start ioloop.
+        """
+        self.connector.run()
