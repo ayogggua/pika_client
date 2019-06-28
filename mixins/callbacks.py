@@ -18,7 +18,7 @@ class CallbackMixin(object):
         LOGGER.debug("Registering callback %s for event %s.", callback, event_name)
         self._callbacks.setdefault(event_name, []).append(callback)
 
-    def _process_callbacks(self, event_name):
+    def process_callbacks(self, event_name):
         callbacks = self._callbacks.get(event_name, [])
         LOGGER.debug("Going to process callbacks %s for the event %s.", callbacks, event_name)
         for callback in callbacks:

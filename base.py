@@ -22,21 +22,11 @@ class BaseConnector(CallbackMixin, object):
     commands that were issued and that should surface in the output as well.
 
     """
-    APP_ID = None
     RECONNECT_INTERVAL = 5  # seconds.
-    EXCHANGE = None
-    EXCHANGE_TYPE = 'topic'
-    QUEUE = 'default-queue'
-    ROUTING_KEY = 'default.*'
 
     def __init__(
             self,
             amqp_url,
-            app_id='',
-            exchange='',
-            exchange_type='topic',
-            queue=None,
-            routing_key='',
             reconnect_interval=None):
         """Create a new instance of the subscriber/publisher class, passing in the AMQP
         URL used to connect to RabbitMQ.
@@ -46,13 +36,8 @@ class BaseConnector(CallbackMixin, object):
         """
         super().__init__()
         self._url = amqp_url
-        self.APP_ID = app_id
         if reconnect_interval is not None:
             self.RECONNECT_INTERVAL = reconnect_interval  # seconds.
-        self.EXCHANGE = exchange
-        self.EXCHANGE_TYPE = exchange_type
-        self.QUEUE = queue
-        self.ROUTING_KEY = routing_key
 
         self._connection = None
         self._channel = None
@@ -143,7 +128,7 @@ class BaseConnector(CallbackMixin, object):
         LOGGER.info('Channel opened')
         self._channel = channel
         self.add_on_channel_close_callback()
-        self.setup_exchange(self.EXCHANGE)
+        self.process_callbacks('on_channel_open')
 
     def add_on_channel_close_callback(self):
         """This method tells pika to call the on_channel_closed method if
@@ -168,73 +153,7 @@ class BaseConnector(CallbackMixin, object):
                        channel, reason)
         self._channel = None
         if not self._closing:
-            self.close_connection()
-
-    def setup_exchange(self, exchange_name):
-        """Setup the exchange on RabbitMQ by invoking the Exchange.Declare RPC
-        command. When it is complete, the on_exchange_declareok method will
-        be invoked by pika.
-
-        :param str|unicode exchange_name: The name of the exchange to declare
-
-        """
-        LOGGER.info('Declaring exchange %s', exchange_name)
-        cb = functools.partial(
-            self.on_exchange_declareok, userdata=exchange_name)
-        self._channel.exchange_declare(
-            exchange=exchange_name,
-            exchange_type=self.EXCHANGE_TYPE,
-            callback=cb,
-            durable=True)
-
-    def on_exchange_declareok(self, unused_frame, userdata):
-        """Invoked by pika when RabbitMQ has finished the Exchange.Declare RPC
-        command.
-
-        :param pika.Frame.Method unused_frame: Exchange.DeclareOk response frame
-
-        """
-        LOGGER.info('Exchange declared: %s.', userdata)
-        self.setup_queue(self.QUEUE)
-
-    def setup_queue(self, queue_name):
-        """Setup the queue on RabbitMQ by invoking the Queue.Declare RPC
-        command. When it is complete, the on_queue_declareok method will
-        be invoked by pika.
-
-        :param str|unicode queue_name: The name of the queue to declare.
-
-        """
-        LOGGER.info('Declaring queue %s', queue_name)
-        self._channel.queue_declare(queue=queue_name, callback=self.on_queue_declareok)
-
-    def on_queue_declareok(self, method_frame):
-        """Method invoked by pika when the Queue.Declare RPC call made in
-        setup_queue has completed. In this method we will bind the queue
-        and exchange together with the routing key by issuing the Queue.Bind
-        RPC command. When this command is complete, the on_bindok method will
-        be invoked by pika.
-
-        :param pika.frame.Method method_frame: The Queue.DeclareOk frame
-
-        """
-        LOGGER.info('Binding %s to %s with %s', self.EXCHANGE, self.QUEUE, self.ROUTING_KEY)
-        self._channel.queue_bind(
-            self.QUEUE,
-            self.EXCHANGE,
-            routing_key=self.ROUTING_KEY,
-            callback=self.on_bindok)
-
-    def on_bindok(self, unused_frame):
-        """Invoked by pika when the Queue.Bind method has completed. At this
-        point we will start consuming messages by calling start_consuming
-        which will invoke the needed RPC commands to start the process.
-
-        :param pika.frame.Method unused_frame: The Queue.BindOk response frame
-
-        """
-        LOGGER.info('Queue bound.')
-        self._process_callbacks('on_bindok')
+            self.close_connection()    
 
     def close_channel(self):
         """Call to close the channel with RabbitMQ cleanly by issuing the
@@ -265,3 +184,34 @@ class BaseConnector(CallbackMixin, object):
 
 class Connector(BaseConnector):
     pass
+
+
+class PubSubInterface(object):
+    def setup_exchange(self, exchange_name):
+        """Setup the exchange on RabbitMQ by invoking the Exchange.Declare RPC
+        command. When it is complete, the on_exchange_declareok method will
+        be invoked by pika.
+
+        :param str|unicode exchange_name: The name of the exchange to declare
+
+        """
+        raise NotImplementedError
+
+    def on_exchange_declareok(self, unused_frame, userdata):
+        """Invoked by pika when RabbitMQ has finished the Exchange.Declare RPC
+        command.
+
+        :param pika.Frame.Method unused_frame: Exchange.DeclareOk response frame
+
+        """
+        raise NotImplementedError
+
+    def on_bindok(self, unused_frame):
+        """Invoked by pika when the Queue.Bind method has completed. At this
+        point we will start consuming messages by calling start_consuming
+        which will invoke the needed RPC commands to start the process.
+
+        :param pika.frame.Method unused_frame: The Queue.BindOk response frame
+
+        """
+        raise NotImplementedError

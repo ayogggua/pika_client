@@ -3,50 +3,60 @@
 import logging
 import functools
 
+from mill_common.base import PubSubInterface
 from mill_common.mixins import CallbackMixin
-from mill_common.base import Connector
 
 LOGGER = logging.getLogger(__name__)
 
 
 class BaseConsumer(CallbackMixin, object):
-
     def __init__(
             self,
-            amqp_url,
+            connector,
             app_id='',
-            exchange='',
-            exchange_type='topic',
-            queue=None,
-            routing_key='',
-            reconnect_interval=None,
-            **kwargs):
+            queue='',
+            durable=True):  # make the queue store the message for recovery if ever RabbitMQ goes down.
         super().__init__()
         self._consumer_tag = None
         self._prefetch_count = 1
         self.was_consuming = False
         self._consuming = False
 
-        self.amqp_url = amqp_url
-        self.connector = self.get_connector_class()(
-            amqp_url=self.amqp_url,
-            app_id=app_id,
-            exchange=exchange,
-            exchange_type=exchange_type,
-            queue=queue,
-            routing_key=routing_key,
-            reconnect_interval=reconnect_interval)
-        self.connector.register_callback('on_bindok', self.start)
-
-    def get_connector_class(self):
-        return Connector
+        self.connector = connector
+        self.APP_ID = app_id
+        self.QUEUE = queue
+        self.durable = durable
 
     def start(self):
         """
         Method to start whatever the interface is designated to do.
         """
+        self.setup_queue(self.QUEUE)    
+
+    def setup_queue(self, queue_name):
+        """Setup the queue on RabbitMQ by invoking the Queue.Declare RPC
+        command. When it is complete, the on_queue_declareok method will
+        be invoked by pika.
+
+        :param str|unicode queue_name: The name of the queue to declare.
+
+        """
+        LOGGER.info('Declaring queue %s', queue_name)
+        self.connector.channel.queue_declare(
+            queue=queue_name,
+            durable=self.durable,
+            callback=self.on_queue_declareok)
+
+    def on_queue_declareok(self, method_frame):
+        """Method invoked by pika when the Queue.Declare RPC call made in
+        setup_queue has completed. In this method we will set QOS so that
+        we can control how the messages are consumed.
+
+        :param pika.frame.Method method_frame: The Queue.DeclareOk frame
+
+        """
+        LOGGER.info("Queue declared. Setting QOS.")
         self.set_qos()
-        self._process_callbacks('start')
 
     def set_qos(self):
         """This method sets up the consumer prefetch to only be delivered
@@ -55,7 +65,8 @@ class BaseConsumer(CallbackMixin, object):
         with different prefetch values to achieve desired performance.
         """
         self.connector.channel.basic_qos(
-            prefetch_count=self._prefetch_count, callback=self.on_basic_qos_ok)
+            prefetch_count=self._prefetch_count,
+            callback=self.on_basic_qos_ok)
 
     def on_basic_qos_ok(self, _unused_frame):
         """Invoked by pika when the Basic.QoS method has completed. At this
@@ -79,7 +90,7 @@ class BaseConsumer(CallbackMixin, object):
         LOGGER.info('Issuing consumer related RPC commands.')
         self.add_on_cancel_callback()
         self._consumer_tag = self.connector.channel.basic_consume(
-            self.connector.QUEUE,
+            self.QUEUE,
             self.on_message)
 
         self.was_consuming = True
@@ -121,6 +132,7 @@ class BaseConsumer(CallbackMixin, object):
         """
         LOGGER.info('Received message # %s from %s: %s',
                     basic_deliver.delivery_tag, properties.app_id, body)
+        self.process_callbacks('on_message')
         self.acknowledge_message(basic_deliver.delivery_tag)
 
     def acknowledge_message(self, delivery_tag):
@@ -180,9 +192,83 @@ class BaseConsumer(CallbackMixin, object):
             userdata)
         self.connector.close_channel()
 
-    def run(self):
-        """
-        Connect and start ioloop.
-        """
-        self.connector.run()
 
+class BasePubSubConsumer(BaseConsumer, PubSubInterface):
+    def __init__(
+            self,
+            connector,
+            app_id='',
+            queue='',
+            durable=True,
+            exchange='',
+            exchange_type='topic',
+            routing_key=''):
+        super().__init__(
+            connector=connector,
+            app_id=app_id,
+            queue=queue,
+            durable=durable)
+        self.EXCHANGE = exchange
+        self.EXCHANGE_TYPE = exchange_type
+        self.ROUTING_KEY = routing_key
+
+    def start(self):
+        """
+        Method to start whatever the interface is designated to do.
+        """
+        self.setup_exchange(self.EXCHANGE)
+
+    def setup_exchange(self, exchange_name):
+        """Setup the exchange on RabbitMQ by invoking the Exchange.Declare RPC
+        command. When it is complete, the on_exchange_declareok method will
+        be invoked by pika.
+
+        :param str|unicode exchange_name: The name of the exchange to declare
+
+        """
+        LOGGER.info('Declaring exchange %s', exchange_name)
+        cb = functools.partial(
+            self.on_exchange_declareok, userdata=exchange_name)
+        self.connector.channel.exchange_declare(
+            exchange=exchange_name,
+            exchange_type=self.EXCHANGE_TYPE,
+            callback=cb,
+            durable=self.durable)
+
+    def on_exchange_declareok(self, unused_frame, userdata):
+        """Invoked by pika when RabbitMQ has finished the Exchange.Declare RPC
+        command.
+
+        :param pika.Frame.Method unused_frame: Exchange.DeclareOk response frame
+
+        """
+        LOGGER.info('Exchange declared: %s.', userdata)
+        self.setup_queue(self.QUEUE)
+
+    def on_queue_declareok(self, method_frame):
+        """Method invoked by pika when the Queue.Declare RPC call made in
+        setup_queue has completed. In this method we will bind the queue
+        and exchange together with the routing key by issuing the Queue.Bind
+        RPC command. When this command is complete, the on_bindok method will
+        be invoked by pika.
+
+        :param pika.frame.Method method_frame: The Queue.DeclareOk frame
+
+        """
+        LOGGER.info('Binding %s to %s with %s', self.EXCHANGE, self.QUEUE, self.ROUTING_KEY)
+        self._channel.queue_bind(
+            self.QUEUE,
+            self.EXCHANGE,
+            routing_key=self.ROUTING_KEY,
+            callback=self.on_bindok)
+
+    def on_bindok(self, unused_frame):
+        """Invoked by pika when the Queue.Bind method has completed. At this
+        point we will start consuming messages by calling start_consuming
+        which will invoke the needed RPC commands to start the process.
+
+        :param pika.frame.Method unused_frame: The Queue.BindOk response frame
+
+        """
+        LOGGER.info('Queue bound. Setting QOS.')
+        self.set_qos()

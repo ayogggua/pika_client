@@ -2,10 +2,11 @@
 
 import logging
 import json
+import functools
 import pika
 
+from mill_common.base import PubSubInterface
 from mill_common.mixins import CallbackMixin
-from mill_common.base import Connector
 
 LOGGER = logging.getLogger(__name__)
 
@@ -13,35 +14,50 @@ LOGGER = logging.getLogger(__name__)
 class BasePublisher(CallbackMixin, object):
     def __init__(
             self,
-            amqp_url,
+            connector,
             app_id='',
-            exchange='',
-            exchange_type='topic',
-            queue=None,
-            routing_key='',
-            reconnect_interval=None,
-            **kwargs):
+            queue='',
+            durable=True,
+            delivery_mode=2):  # persist the message even if RabbitMQ dies for recovery purpose.
         super().__init__()
-        self.amqp_url = amqp_url
-        self.connector = self.get_connector_class()(
-            amqp_url=self.amqp_url,
-            app_id=app_id,
-            exchange=exchange,
-            exchange_type=exchange_type,
-            queue=queue,
-            routing_key=routing_key,
-            reconnect_interval=reconnect_interval)
-        self.connector.register_callback('on_bindok', self.start)
-
-    def get_connector_class(self):
-        return Connector
+        self.connector = connector
+        self.APP_ID = app_id
+        self.EXCHANGE = ''
+        self.QUEUE = queue
+        self.delivery_mode = delivery_mode
 
     def start(self):
         """
         Method to start whatever the interface is designated to do.
         """
+        self.setup_queue(self.QUEUE)    
+
+    def setup_queue(self, queue_name):
+        """Setup the queue on RabbitMQ by invoking the Queue.Declare RPC
+        command. When it is complete, the on_queue_declareok method will
+        be invoked by pika.
+
+        :param str|unicode queue_name: The name of the queue to declare.
+
+        """
+        LOGGER.info('Declaring queue %s', queue_name)
+        self.connector.channel.queue_declare(
+            queue=queue_name,
+            durable=self.durable,
+            callback=self.on_queue_declareok)
+
+    def on_queue_declareok(self, method_frame):
+        """Method invoked by pika when the Queue.Declare RPC call made in
+        setup_queue has completed. In this method we will bind the queue
+        and exchange together with the routing key by issuing the Queue.Bind
+        RPC command. When this command is complete, the on_bindok method will
+        be invoked by pika.
+
+        :param pika.frame.Method method_frame: The Queue.DeclareOk frame
+
+        """
+        LOGGER.info("Queue declared. Enabing delivery confirmations.")
         self.enable_delivery_confirmations()
-        self._process_callbacks('start')
 
     def enable_delivery_confirmations(self):
         """Send the Confirm.Select RPC method to RabbitMQ to enable delivery
@@ -100,15 +116,16 @@ class BasePublisher(CallbackMixin, object):
 
         headers = {}
         properties = pika.BasicProperties(
-            app_id=self.connector.APP_ID,
+            app_id=self.APP_ID,
             content_type='application/json',
             headers=headers)
 
         channel.basic_publish(
-            self.connector.EXCHANGE,
-            self.connector.ROUTING_KEY,
+            self.EXCHANGE,
+            self.ROUTING_KEY,
             json.dumps(message, ensure_ascii=False),
-            properties)
+            properties,
+            delivery_mode=self.delivery_mode)
 
         LOGGER.info('Published message # %s', message)
 
@@ -126,8 +143,57 @@ class BasePublisher(CallbackMixin, object):
         self.connector.close_connection()
         LOGGER.info("Stopped.")
 
-    def run(self):
+
+class BasePubSubPublisher(BasePublisher, PubSubInterface):
+    def __init__(
+            self,
+            connector,
+            app_id='',
+            queue=None,
+            durable=True,
+            delivery_mode=2,
+            exchange='',
+            exchange_type='topic',
+            routing_key=''):
+        # we omit queue to the super bcos, pubsub producer should not send to a queue directly.
+        # all messages are routed through an exchange and received by queues bound to it.
+        super().__init__(
+            connector=connector,
+            app_id=app_id,
+            delivery_mode=delivery_mode)
+        self.EXCHANGE = exchange
+        self.EXCHANGE_TYPE = exchange_type
+        self.ROUTING_KEY = routing_key
+
+    def start(self):
         """
-        Connect and start ioloop.
+        Method to start whatever the interface is designated to do.
         """
-        self.connector.run()
+        self.setup_exchange(self.EXCHANGE)
+
+    def setup_exchange(self, exchange_name):
+        """Setup the exchange on RabbitMQ by invoking the Exchange.Declare RPC
+        command. When it is complete, the on_exchange_declareok method will
+        be invoked by pika.
+
+        :param str|unicode exchange_name: The name of the exchange to declare
+
+        """
+        LOGGER.info('Declaring exchange %s', exchange_name)
+        cb = functools.partial(
+            self.on_exchange_declareok, userdata=exchange_name)
+        self.connector.channel.exchange_declare(
+            exchange=exchange_name,
+            exchange_type=self.EXCHANGE_TYPE,
+            callback=cb,
+            durable=self.durable)
+
+    def on_exchange_declareok(self, unused_frame, userdata):
+        """Invoked by pika when RabbitMQ has finished the Exchange.Declare RPC
+        command.
+
+        :param pika.Frame.Method unused_frame: Exchange.DeclareOk response frame
+
+        """
+        LOGGER.info('Exchange declared: %s.', userdata)
+        self.enable_delivery_confirmations()
