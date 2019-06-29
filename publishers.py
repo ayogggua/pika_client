@@ -12,18 +12,15 @@ LOGGER = logging.getLogger(__name__)
 
 
 class BasePublisher(CallbackMixin, object):
-    def __init__(
-            self,
-            connector,
-            app_id='',
-            queue='',
-            durable=True,
-            delivery_mode=2):  # persist the message even if RabbitMQ dies for recovery purpose.
+    def __init__(self, connector, app_id='', queue='', durable=True, delivery_mode=2):
         super().__init__()
         self.connector = connector
         self.APP_ID = app_id
         self.EXCHANGE = ''
         self.QUEUE = queue
+        # defaults to True and makes the queue store the message for recovery if ever RabbitMQ goes down.
+        self.durable = durable
+        # defaults to 2 and persists the message to the disk even if RabbitMQ dies.
         self.delivery_mode = delivery_mode
 
     def start(self):
@@ -155,12 +152,9 @@ class BasePubSubPublisher(BasePublisher, PubSubInterface):
             exchange='',
             exchange_type='topic',
             routing_key=''):
-        # we omit queue to the super bcos, pubsub producer should not send to a queue directly.
+        # we omit queue in the call to the super bcos, pubsub producer should not send to a queue directly.
         # all messages are routed through an exchange and received by queues bound to it.
-        super().__init__(
-            connector=connector,
-            app_id=app_id,
-            delivery_mode=delivery_mode)
+        super().__init__(connector=connector, app_id=app_id, delivery_mode=delivery_mode)
         self.EXCHANGE = exchange
         self.EXCHANGE_TYPE = exchange_type
         self.ROUTING_KEY = routing_key
@@ -185,8 +179,7 @@ class BasePubSubPublisher(BasePublisher, PubSubInterface):
         self.connector.channel.exchange_declare(
             exchange=exchange_name,
             exchange_type=self.EXCHANGE_TYPE,
-            callback=cb,
-            durable=self.durable)
+            callback=cb)
 
     def on_exchange_declareok(self, unused_frame, userdata):
         """Invoked by pika when RabbitMQ has finished the Exchange.Declare RPC

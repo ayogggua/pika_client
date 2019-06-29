@@ -24,10 +24,7 @@ class BaseConnector(CallbackMixin, object):
     """
     RECONNECT_INTERVAL = 5  # seconds.
 
-    def __init__(
-            self,
-            amqp_url,
-            reconnect_interval=None):
+    def __init__(self, amqp_url, reconnect_interval=None):
         """Create a new instance of the subscriber/publisher class, passing in the AMQP
         URL used to connect to RabbitMQ.
 

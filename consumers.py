@@ -10,12 +10,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class BaseConsumer(CallbackMixin, object):
-    def __init__(
-            self,
-            connector,
-            app_id='',
-            queue='',
-            durable=True):  # make the queue store the message for recovery if ever RabbitMQ goes down.
+    def __init__(self, connector, app_id='', queue='', durable=True):
         super().__init__()
         self._consumer_tag = None
         self._prefetch_count = 1
@@ -25,6 +20,7 @@ class BaseConsumer(CallbackMixin, object):
         self.connector = connector
         self.APP_ID = app_id
         self.QUEUE = queue
+        # defaults to True and makes the queue store the message for recovery if ever RabbitMQ goes down.
         self.durable = durable
 
     def start(self):
@@ -203,11 +199,7 @@ class BasePubSubConsumer(BaseConsumer, PubSubInterface):
             exchange='',
             exchange_type='topic',
             routing_key=''):
-        super().__init__(
-            connector=connector,
-            app_id=app_id,
-            queue=queue,
-            durable=durable)
+        super().__init__(connector=connector, app_id=app_id, queue=queue, durable=durable)
         self.EXCHANGE = exchange
         self.EXCHANGE_TYPE = exchange_type
         self.ROUTING_KEY = routing_key
