@@ -3,8 +3,8 @@
 import logging
 import functools
 
-from mill_common.base import PubSubInterface
-from mill_common.mixins import CallbackMixin
+from pika_client.base import PubSubInterface
+from pika_client.mixins import CallbackMixin
 
 LOGGER = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class BaseConsumer(CallbackMixin, object):
         """
         LOGGER.info('Received message # %s from %s: %s',
                     basic_deliver.delivery_tag, properties.app_id, body)
-        self.process_callbacks('on_message')
+        self.process_callbacks('on_message', body)
         self.acknowledge_message(basic_deliver.delivery_tag)
 
     def acknowledge_message(self, delivery_tag):
@@ -248,7 +248,7 @@ class BasePubSubConsumer(BaseConsumer, PubSubInterface):
 
         """
         LOGGER.info('Binding %s to %s with %s', self.EXCHANGE, self.QUEUE, self.ROUTING_KEY)
-        self._channel.queue_bind(
+        self.connector.channel.queue_bind(
             self.QUEUE,
             self.EXCHANGE,
             routing_key=self.ROUTING_KEY,

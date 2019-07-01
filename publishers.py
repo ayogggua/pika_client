@@ -5,8 +5,8 @@ import json
 import functools
 import pika
 
-from mill_common.base import PubSubInterface
-from mill_common.mixins import CallbackMixin
+from pika_client.base import PubSubInterface
+from pika_client.mixins import CallbackMixin
 
 LOGGER = logging.getLogger(__name__)
 
