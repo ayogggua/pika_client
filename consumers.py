@@ -110,7 +110,7 @@ class BaseConsumer(CallbackMixin, object):
         """
         LOGGER.info('Consumer was cancelled remotely, shutting down: %r',
                     method_frame)
-        self.connector.close_channel()
+        self.connector.stop()
 
     def on_message(self, unused_channel, basic_deliver, properties, body):
         """Invoked by pika when a message is delivered from RabbitMQ. The
@@ -184,7 +184,7 @@ class BaseConsumer(CallbackMixin, object):
         LOGGER.info(
             'RabbitMQ acknowledged the cancellation of the consumer: %s',
             userdata)
-        self.connector.close_channel()
+        self.connector.stop()
 
 
 class BasePubSubConsumer(BaseConsumer, PubSubInterface):

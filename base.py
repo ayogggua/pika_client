@@ -167,7 +167,11 @@ class BaseConnector(CallbackMixin, object):
             self._connection.close()
 
     def stop(self):
+        """
+        Cleanly shutdown the service.
+        """
         self.close_channel()
+        self.close_connection()
 
     def run(self):
         try:

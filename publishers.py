@@ -89,9 +89,11 @@ class BasePublisher(CallbackMixin, object):
                     method_frame.method.delivery_tag)
         if confirmation_type == 'ack':
             LOGGER.info('Acknowledged message %i.', method_frame.method.delivery_tag)
+            self.stop()
         elif confirmation_type == 'nack':
             # TODO: retry logic.
-            raise NotImplementedError
+            LOGGER.error("Unacknowledged message %i.", method_frame.method.delivery_tag)
+            self.stop()
 
     def publish_message(self, message):
         """If the class is not stopping, publish a message to RabbitMQ,
@@ -190,3 +192,4 @@ class BasePubSubPublisher(BasePublisher, PubSubInterface):
         """
         LOGGER.info('Exchange declared: %s.', userdata)
         self.enable_delivery_confirmations()
+        self.process_callbacks('on_exchange_declareok')
