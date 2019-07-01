@@ -149,8 +149,7 @@ class BaseConnector(CallbackMixin, object):
         LOGGER.warning('Channel %i was closed: %s',
                        channel, reason)
         self._channel = None
-        if not self._closing:
-            self.close_connection()    
+        self.close_connection()    
 
     def close_channel(self):
         """Call to close the channel with RabbitMQ cleanly by issuing the
@@ -166,6 +165,9 @@ class BaseConnector(CallbackMixin, object):
         if self._connection is not None and not self._connection.is_closed:
             LOGGER.info('Closing connection')
             self._connection.close()
+
+    def stop(self):
+        self.close_channel()
 
     def run(self):
         try:

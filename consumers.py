@@ -151,15 +151,13 @@ class BaseConsumer(CallbackMixin, object):
         communicate with RabbitMQ. All of the commands issued prior to starting
         the IOLoop will be buffered but not processed.
         """
-        if not self.connector._closing:
-            self.connector._closing = True
-            LOGGER.info('Stopping.')
-            if self._consuming:
-                self.stop_consuming()
-                self.connector.ioloop.start()
-            else:
-                self.connector.ioloop.stop()
-            LOGGER.info('Stopped.')
+        self.connector._closing = True
+        LOGGER.info('Stopping.')
+        if self._consuming:
+            self.stop_consuming()
+        else:
+            self.connector.stop()
+        LOGGER.info('Stopped.')
 
     def stop_consuming(self):
         """Tell RabbitMQ that you would like to stop consuming by sending the

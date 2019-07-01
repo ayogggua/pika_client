@@ -114,6 +114,7 @@ class BasePublisher(CallbackMixin, object):
         headers = {}
         properties = pika.BasicProperties(
             app_id=self.APP_ID,
+            delivery_mode=self.delivery_mode,
             content_type='application/json',
             headers=headers)
 
@@ -121,8 +122,7 @@ class BasePublisher(CallbackMixin, object):
             self.EXCHANGE,
             self.ROUTING_KEY,
             json.dumps(message, ensure_ascii=False),
-            properties,
-            delivery_mode=self.delivery_mode)
+            properties)
 
         LOGGER.info('Published message # %s', message)
 
@@ -136,8 +136,7 @@ class BasePublisher(CallbackMixin, object):
         """
         LOGGER.info('Stopping.')
         self.connector._closing = True
-        self.connector.close_channel()
-        self.connector.close_connection()
+        self.connector.stop()
         LOGGER.info("Stopped.")
 
 
@@ -179,6 +178,7 @@ class BasePubSubPublisher(BasePublisher, PubSubInterface):
         self.connector.channel.exchange_declare(
             exchange=exchange_name,
             exchange_type=self.EXCHANGE_TYPE,
+            durable=self.durable,
             callback=cb)
 
     def on_exchange_declareok(self, unused_frame, userdata):
