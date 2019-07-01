@@ -55,6 +55,7 @@ class BasePublisher(CallbackMixin, object):
         """
         LOGGER.info("Queue declared. Enabing delivery confirmations.")
         self.enable_delivery_confirmations()
+        self.process_callbacks("on_queue_declareok")
 
     def enable_delivery_confirmations(self):
         """Send the Confirm.Select RPC method to RabbitMQ to enable delivery
