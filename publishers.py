@@ -122,7 +122,7 @@ class BasePublisher(CallbackMixin, object):
         Generate a pika.BasicProperties object based on the content type and delivery mode.
         """
         extra_headers = {} if not isinstance(extra_headers, dict) else extra_headers
-        headers = self.get_message_headers(extra_headers)
+        headers = self.get_message_headers(**extra_headers)
         return pika.BasicProperties(
             app_id=self.APP_ID,
             delivery_mode=self.delivery_mode,
