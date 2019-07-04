@@ -10,7 +10,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class BaseConsumer(CallbackMixin, object):
-    def __init__(self, connector, app_id='', queue='', durable=True):
+    def __init__(self, connector, app_id='', queue='', durable=False):
         super().__init__()
         self._consumer_tag = None
         self._prefetch_count = 1
@@ -193,7 +193,7 @@ class BasePubSubConsumer(BaseConsumer, PubSubInterface):
             connector,
             app_id='',
             queue='',
-            durable=True,
+            durable=False,
             exchange='',
             exchange_type='topic',
             routing_key=''):

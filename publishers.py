@@ -12,7 +12,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class BasePublisher(CallbackMixin, object):
-    def __init__(self, connector, app_id='', queue='', durable=True, delivery_mode=2):
+    def __init__(self, connector, app_id='', queue='', durable=False, delivery_mode=1):
         super().__init__()
         self.connector = connector
         self.APP_ID = app_id
@@ -90,11 +90,57 @@ class BasePublisher(CallbackMixin, object):
                     method_frame.method.delivery_tag)
         if confirmation_type == 'ack':
             LOGGER.info('Acknowledged message %i.', method_frame.method.delivery_tag)
-            self.stop()
+            self.handle_acknowledged_message(method_frame)
         elif confirmation_type == 'nack':
-            # TODO: retry logic.
             LOGGER.error("Unacknowledged message %i.", method_frame.method.delivery_tag)
-            self.stop()
+            self.handle_unacknowledged_message(method_frame)
+
+    def handle_acknowledged_message(self, method_frame):
+        """
+        Write how do you want to handle a acknowledged message from RabbitMQ.
+        """
+        pass
+
+    def handle_unacknowledged_message(self, method_frame):
+        """
+        Write how do you want to handle an unackowledged message from RabbitMQ.
+        Maybe some re-try logic.
+        """
+        pass
+
+    def get_message_headers(self, **extra_headers):
+        """
+        Generate some headers to pass to channel.basic_publish method.
+        Additional headers passed in will be updated and send along.
+        """
+        headers = {}  # by default we do not have any headers.
+        headers.update(extra_headers)
+        return headers
+
+    def get_message_properties(self, content_type='text/plain', extra_headers=None):
+        """
+        Generate a pika.BasicProperties object based on the content type and delivery mode.
+        """
+        extra_headers = {} if not isinstance(extra_headers, dict) else extra_headers
+        headers = self.get_message_headers(extra_headers)
+        return pika.BasicProperties(
+            app_id=self.APP_ID,
+            delivery_mode=self.delivery_mode,
+            content_type=content_type,
+            headers=headers)
+
+    def encode_message_and_properties(self, message):
+        """
+        1. Convert the message to appropriate content type and encoding.
+        2. Get the corresponding properties by setting the correct content type headers etc.
+        3. Return both the encoded message and its properties.
+
+        Content type is plain text by default.
+
+        Child classes can override this method to format the message accordingly.
+        """
+        properties = self.get_message_properties()
+        return message, properties
 
     def publish_message(self, message):
         """If the class is not stopping, publish a message to RabbitMQ,
@@ -114,17 +160,12 @@ class BasePublisher(CallbackMixin, object):
             LOGGER.error("Cannot publish the message. Channel unavailable or closed.")
             return
 
-        headers = {}
-        properties = pika.BasicProperties(
-            app_id=self.APP_ID,
-            delivery_mode=self.delivery_mode,
-            content_type='application/json',
-            headers=headers)
+        message, properties = self.encode_message_and_properties()
 
         channel.basic_publish(
             self.EXCHANGE,
             self.ROUTING_KEY,
-            json.dumps(message, ensure_ascii=False),
+            message,
             properties)
 
         LOGGER.info('Published message # %s', message)
@@ -149,8 +190,8 @@ class BasePubSubPublisher(BasePublisher, PubSubInterface):
             connector,
             app_id='',
             queue=None,
-            durable=True,
-            delivery_mode=2,
+            durable=False,
+            delivery_mode=1,
             exchange='',
             exchange_type='topic',
             routing_key=''):
