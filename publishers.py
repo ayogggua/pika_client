@@ -160,7 +160,7 @@ class BasePublisher(CallbackMixin, object):
             LOGGER.error("Cannot publish the message. Channel unavailable or closed.")
             return
 
-        message, properties = self.encode_message_and_properties()
+        message, properties = self.encode_message_and_properties(message)
 
         channel.basic_publish(
             self.EXCHANGE,
@@ -197,7 +197,7 @@ class BasePubSubPublisher(BasePublisher, PubSubInterface):
             routing_key=''):
         # we omit queue in the call to the super bcos, pubsub producer should not send to a queue directly.
         # all messages are routed through an exchange and received by queues bound to it.
-        super().__init__(connector=connector, app_id=app_id, delivery_mode=delivery_mode)
+        super().__init__(connector=connector, app_id=app_id, durable=durable, delivery_mode=delivery_mode)
         self.EXCHANGE = exchange
         self.EXCHANGE_TYPE = exchange_type
         self.ROUTING_KEY = routing_key
